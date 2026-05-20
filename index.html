@@ -1,621 +1,562 @@
-<!DOCTYPE html>
-<html lang="ko">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>N회독</title>
-    <link rel="apple-touch-icon" href="icon.png">
-    <link rel="icon" href="icon.png">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="default">
-    <!-- React & ReactDOM CDN -->
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
-    <!-- Babel Standalone for JSX compilation in browser -->
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <!-- Font -->
-    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;800&display=swap" rel="stylesheet">
-    <style>
-        body, html {
-            margin: 0;
-            padding: 0;
-            width: 100%;
-            height: 100%;
-            font-family: 'Noto Sans KR', 'Apple SD Gothic Neo', sans-serif;
-            background-color: #f0f2f8;
-            -webkit-user-select: none;
-            -moz-user-select: none;
-            -ms-user-select: none;
-            user-select: none;
-        }
-        /* Hide scrollbars for chrome, safari and opera */
-        ::-webkit-scrollbar {
-            display: none;
-        }
-        /* Hide scrollbars for ie, edge and firefox */
-        html, body {
-            -ms-overflow-style: none;  /* IE and Edge */
-            scrollbar-width: none;  /* Firefox */
-        }
-    </style>
-</head>
-<body>
-    <div id="root"></div>
+import { useState, useRef, useEffect } from "react";
 
-    <script type="text/babel">
-        const { useState, useRef, useEffect } = React;
+function textColor(hex) {
+  const h = (hex||"#888888").replace("#","");
+  const r = parseInt(h.slice(0,2),16)||0;
+  const g = parseInt(h.slice(2,4),16)||0;
+  const b = parseInt(h.slice(4,6),16)||0;
+  return (0.299*r+0.587*g+0.114*b)/255 > 0.55 ? "#444" : "#fff";
+}
 
-        function textColor(hex) {
-            const h = (hex||"#888888").replace("#","");
-            const r = parseInt(h.slice(0,2),16)||0;
-            const g = parseInt(h.slice(2,4),16)||0;
-            const b = parseInt(h.slice(4,6),16)||0;
-            return (0.299*r+0.587*g+0.114*b)/255 > 0.55 ? "#444" : "#fff";
-        }
+const STORAGE_KEY = "nhoedok-v5";
+async function load() {
+  try { const r = await window.storage.get(STORAGE_KEY); return r ? JSON.parse(r.value) : null; } catch { return null; }
+}
+async function save(data) {
+  try { await window.storage.set(STORAGE_KEY, JSON.stringify(data)); } catch {}
+}
 
-        // Mock window.storage for standard localStorage if window.storage does not exist (for standalone environments)
-        const STORAGE_KEY = "nhoedok-v5";
-        const customStorage = {
-            get: async (key) => {
-                try {
-                    const val = localStorage.getItem(key);
-                    return val ? { value: val } : null;
-                } catch { return null; }
-            },
-            set: async (key, val) => {
-                try {
-                    localStorage.setItem(key, val);
-                } catch {}
-            }
-        };
-        const storageBridge = window.storage || customStorage;
+const PRESET = [
+  "#FF6B6B","#FF8E53","#FFC857","#A8E063",
+  "#4ECDC4","#45B7D1","#9B59B6","#E91E8C",
+  "#FF85A1","#7BC8A4","#5C7AEA","#F7971E",
+];
+const DAYS = ["일","월","화","수","목","금","토"];
+function gid() { return Math.random().toString(36).slice(2,9); }
+function getCalCells(year, month) {
+  const fd = new Date(year,month,1).getDay();
+  const ld = new Date(year,month+1,0).getDate();
+  const py = month===0?year-1:year, pm = month===0?11:month-1;
+  const pl = new Date(year,month,0).getDate();
+  const cells=[];
+  for(let i=0;i<fd;i++) cells.push({day:pl-fd+1+i,year:py,month:pm,isPrev:true});
+  for(let d=1;d<=ld;d++) cells.push({day:d,year,month,isPrev:false});
+  return cells;
+}
+function dk(y,m,d){ return `${y}-${String(m+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`; }
 
-        async function load() {
-            try { const r = await storageBridge.get(STORAGE_KEY); return r ? JSON.parse(r.value) : null; } catch { return null; }
-        }
-        async function save(data) {
-            try { await storageBridge.set(STORAGE_KEY, JSON.stringify(data)); } catch {}
-        }
+/* ── Modal shell ── */
+function Modal({children,onClose}){
+  return(
+    <div onClick={e=>{if(e.target===e.currentTarget)onClose();}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.3)",backdropFilter:"blur(5px)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:300}}>
+      <div style={{background:"#fff",borderRadius:22,padding:"26px",width:320,boxShadow:"0 20px 60px rgba(0,0,0,0.15)"}}>{children}</div>
+    </div>
+  );
+}
+function MInput({label,value,onChange,onEnter,borderColor="#eee"}){
+  return(
+    <>
+      <label style={{fontSize:12,fontWeight:600,color:"#999",display:"block",marginBottom:5}}>{label}</label>
+      <input autoFocus value={value} onChange={e=>onChange(e.target.value)} onKeyDown={e=>e.key==="Enter"&&onEnter()}
+        style={{width:"100%",padding:"9px 12px",borderRadius:10,boxSizing:"border-box",border:`1.5px solid ${borderColor}`,fontSize:14,outline:"none",fontFamily:"inherit",marginBottom:14}}/>
+    </>
+  );
+}
+function ColorPicker({value,onChange}){
+  return(
+    <>
+      <label style={{fontSize:12,fontWeight:600,color:"#999",display:"block",marginBottom:7}}>색상</label>
+      <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:9}}>
+        {PRESET.map(c=>(
+          <div key={c} onClick={()=>onChange(c)} style={{width:26,height:26,borderRadius:"50%",background:c,cursor:"pointer",border:value===c?"3px solid #1a1a2e":"3px solid transparent",transform:value===c?"scale(1.2)":"scale(1)",transition:"transform 0.1s",boxShadow:`0 2px 5px ${c}55`}}/>
+        ))}
+      </div>
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:20}}>
+        <input type="color" value={value} onChange={e=>onChange(e.target.value)} style={{width:28,height:28,borderRadius:7,border:"1.5px solid #eee",cursor:"pointer",padding:2}}/>
+        <span style={{fontSize:11,color:"#bbb"}}>직접 선택</span>
+      </div>
+    </>
+  );
+}
+function MActions({onCancel,onConfirm,disabled,color,label}){
+  return(
+    <div style={{display:"flex",gap:8}}>
+      <button onClick={onCancel} style={{flex:1,padding:"9px",borderRadius:10,border:"1.5px solid #eee",background:"#fff",cursor:"pointer",fontWeight:600,fontSize:13,fontFamily:"inherit"}}>취소</button>
+      <button onClick={onConfirm} style={{flex:2,padding:"9px",borderRadius:10,border:"none",background:disabled?"#f0f0f0":color,color:disabled?"#bbb":textColor(color),cursor:disabled?"default":"pointer",fontWeight:700,fontSize:13,fontFamily:"inherit",boxShadow:disabled?"none":`0 4px 12px ${color}40`}}>{label}</button>
+    </div>
+  );
+}
 
-        const PRESET = [
-            "#FF6B6B","#FF8E53","#FFC857","#A8E063",
-            "#4ECDC4","#45B7D1","#9B59B6","#E91E8C",
-            "#FF85A1","#7BC8A4","#5C7AEA","#F7971E",
-        ];
-        const DAYS = ["일","월","화","수","목","금","토"];
-        function gid() { return Math.random().toString(36).slice(2,9); }
-        function getCalCells(year, month) {
-            const fd = new Date(year,month,1).getDay();
-            const ld = new Date(year,month+1,0).getDate();
-            const py = month===0?year-1:year, pm = month===0?11:month-1;
-            const pl = new Date(year,month,0).getDate();
-            const cells=[];
-            for(let i=0;i<fd;i++) cells.push({day:pl-fd+1+i,year:py,month:pm,isPrev:true});
-            for(let d=1;d<=ld;d++) cells.push({day:d,year,month,isPrev:false});
-            return cells;
-        }
-        function dk(y,m,d){ return `${y}-${String(m+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`; }
+export default function App(){
+  const today = new Date();
 
-        /* ── Modal shell ── */
-        function Modal({children,onClose}){
-            return(
-                <div onClick={e=>{if(e.target===e.currentTarget)onClose();}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.3)",backdropFilter:"blur(5px)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:300}}>
-                    <div style={{background:"#fff",borderRadius:22,padding:"26px",width:320,boxShadow:"0 20px 60px rgba(0,0,0,0.15)"}}>{children}</div>
+  /* ── State ── */
+  const [projects,  setProjects]  = useState([]); // [{id,name,color,subjects:[{id,name,color,items:[{id,name,count}]}]}]
+  const [activePid, setActivePid] = useState("");
+  const [activeSid, setActiveSid] = useState("");
+  const [plans,     setPlans]     = useState({});
+  const [calYear,   setCalYear]   = useState(today.getFullYear());
+  const [calMonth,  setCalMonth]  = useState(today.getMonth());
+  const [hovKey,    setHovKey]    = useState(null);
+
+  /* drag */
+  const [ghost,      setGhost]    = useState(null);
+  const dragRef      = useRef(null);
+  const pressTimer   = useRef(null);
+  const dragging     = useRef(false);
+
+  /* modals */
+  const [pm,  setPm]  = useState(null); // "add" | {edit: project}
+  const [sm,  setSm]  = useState(null); // "add" | {edit: subject}
+  const [im,  setIm]  = useState(false);
+  const [pForm, setPForm] = useState({name:"",color:PRESET[0]});
+  const [sForm, setSForm] = useState({name:"",color:PRESET[4]});
+  const [iName, setIName] = useState("");
+  const [editingItem, setEditingItem] = useState(null);
+  const itemDblRef = useRef({});
+  const dblRef     = useRef({});
+
+  /* storage */
+  const [loaded, setLoaded] = useState(false);
+  useEffect(()=>{
+    load().then(d=>{
+      if(d){
+        if(d.projects) setProjects(d.projects);
+        if(d.activePid) setActivePid(d.activePid);
+        if(d.activeSid) setActiveSid(d.activeSid);
+        if(d.plans)     setPlans(d.plans);
+      }
+      setLoaded(true);
+    });
+  },[]);
+  useEffect(()=>{
+    if(!loaded) return;
+    save({projects,activePid,activeSid,plans});
+  },[projects,activePid,activeSid,plans,loaded]);
+
+  /* derived */
+  const activeP = projects.find(p=>p.id===activePid)||projects[0];
+  const activeS = activeP?.subjects?.find(s=>s.id===activeSid)||activeP?.subjects?.[0];
+  const calCells = getCalCells(calYear,calMonth);
+
+  /* keep activeSid in sync when project changes */
+  useEffect(()=>{
+    if(activeP && (!activeSid || !activeP.subjects?.find(s=>s.id===activeSid))){
+      setActiveSid(activeP.subjects?.[0]?.id||"");
+    }
+  },[activePid,activeP]);
+
+  /* ── Drag ── */
+  const startPress=(e,item,subj,proj)=>{
+    e.preventDefault();
+    const cx=e.touches?e.touches[0].clientX:e.clientX;
+    const cy=e.touches?e.touches[0].clientY:e.clientY;
+    pressTimer.current=setTimeout(()=>{
+      dragging.current=true;
+      dragRef.current={itemId:item.id,itemName:item.name,subjectId:subj.id,projectId:proj.id,color:subj.color};
+      setGhost({x:cx,y:cy,itemName:item.name,color:subj.color});
+      navigator.vibrate?.(30);
+    },500);
+  };
+  const movePress=(e)=>{
+    if(!dragging.current) return;
+    const cx=e.touches?e.touches[0].clientX:e.clientX;
+    const cy=e.touches?e.touches[0].clientY:e.clientY;
+    setGhost(g=>g?{...g,x:cx,y:cy}:null);
+    const el=document.elementFromPoint(cx,cy);
+    const cell=el?.closest("[data-daykey]");
+    setHovKey(cell?cell.dataset.daykey:null);
+  };
+  const endPress=()=>{
+    clearTimeout(pressTimer.current);
+    if(dragging.current&&hovKey&&dragRef.current){
+      const d=dragRef.current;
+      setPlans(prev=>({...prev,[hovKey]:[...(prev[hovKey]||[]),{planId:gid(),projectId:d.projectId,subjectId:d.subjectId,itemId:d.itemId}]}));
+    }
+    dragging.current=false; dragRef.current=null; setGhost(null); setHovKey(null);
+  };
+  useEffect(()=>{
+    window.addEventListener("mousemove",movePress);
+    window.addEventListener("mouseup",endPress);
+    window.addEventListener("touchmove",movePress,{passive:true});
+    window.addEventListener("touchend",endPress);
+    return()=>{
+      window.removeEventListener("mousemove",movePress);
+      window.removeEventListener("mouseup",endPress);
+      window.removeEventListener("touchmove",movePress);
+      window.removeEventListener("touchend",endPress);
+    };
+  },[hovKey]);
+
+  /* ── Plans ── */
+  const removePlan=(key,planId)=>setPlans(prev=>{
+    const u=(prev[key]||[]).filter(p=>p.planId!==planId);
+    const n={...prev}; if(u.length===0)delete n[key]; else n[key]=u; return n;
+  });
+
+  /* ── Project CRUD ── */
+  const addProject=()=>{
+    if(!pForm.name.trim()) return;
+    const id=gid();
+    setProjects(prev=>[...prev,{id,name:pForm.name.trim(),color:pForm.color,subjects:[]}]);
+    setActivePid(id); setPForm({name:"",color:PRESET[0]}); setPm(null);
+  };
+  const saveProject=()=>{
+    if(!pForm.name.trim()) return;
+    setProjects(prev=>prev.map(p=>p.id===pm.edit.id?{...p,name:pForm.name.trim(),color:pForm.color}:p));
+    setPm(null);
+  };
+  const deleteProject=(id)=>{
+    const rest=projects.filter(p=>p.id!==id);
+    setProjects(rest); setActivePid(rest[0]?.id||""); setPm(null);
+    setPlans(prev=>{const n={};for(const[k,arr]of Object.entries(prev)){const f=arr.filter(e=>e.projectId!==id);if(f.length)n[k]=f;}return n;});
+  };
+  const handleProjClick=(p)=>{
+    const now=Date.now(), last=dblRef.current["p_"+p.id]||0;
+    if(now-last<400){ setPForm({name:p.name,color:p.color}); setPm({edit:p}); }
+    else setActivePid(p.id);
+    dblRef.current["p_"+p.id]=now;
+  };
+
+  /* ── Subject CRUD ── */
+  const addSubject=()=>{
+    if(!sForm.name.trim()||!activeP) return;
+    const id=gid();
+    setProjects(prev=>prev.map(p=>p.id===activeP.id?{...p,subjects:[...(p.subjects||[]),{id,name:sForm.name.trim(),color:sForm.color,items:[]}]}:p));
+    setActiveSid(id); setSForm({name:"",color:PRESET[4]}); setSm(null);
+  };
+  const saveSubject=()=>{
+    if(!sForm.name.trim()) return;
+    setProjects(prev=>prev.map(p=>p.id===activeP.id?{...p,subjects:p.subjects.map(s=>s.id===sm.edit.id?{...s,name:sForm.name.trim(),color:sForm.color}:s)}:p));
+    setSm(null);
+  };
+  const deleteSubject=(id)=>{
+    setProjects(prev=>prev.map(p=>p.id===activeP.id?{...p,subjects:p.subjects.filter(s=>s.id!==id)}:p));
+    setActiveSid(activeP.subjects?.find(s=>s.id!==id)?.id||""); setSm(null);
+    setPlans(prev=>{const n={};for(const[k,arr]of Object.entries(prev)){const f=arr.filter(e=>e.subjectId!==id);if(f.length)n[k]=f;}return n;});
+  };
+  const handleSubjClick=(s)=>{
+    const now=Date.now(), last=dblRef.current["s_"+s.id]||0;
+    if(now-last<400){ setSForm({name:s.name,color:s.color}); setSm({edit:s}); }
+    else setActiveSid(s.id);
+    dblRef.current["s_"+s.id]=now;
+  };
+
+  /* ── Item CRUD ── */
+  const addItem=()=>{
+    if(!iName.trim()||!activeP||!activeS) return;
+    const id=gid();
+    setProjects(prev=>prev.map(p=>p.id===activeP.id?{...p,subjects:p.subjects.map(s=>s.id===activeS.id?{...s,items:[...s.items,{id,name:iName.trim(),count:0}]}:s)}:p));
+    setIName(""); setIm(false);
+  };
+  const removeItem=(iId)=>{
+    setProjects(prev=>prev.map(p=>p.id===activeP.id?{...p,subjects:p.subjects.map(s=>s.id===activeS.id?{...s,items:s.items.filter(it=>it.id!==iId)}:s)}:p));
+    setPlans(prev=>{const n={};for(const[k,arr]of Object.entries(prev)){const f=arr.filter(e=>!(e.subjectId===activeS.id&&e.itemId===iId));if(f.length)n[k]=f;}return n;});
+  };
+  const inc=(iId)=>setProjects(prev=>prev.map(p=>p.id===activeP.id?{...p,subjects:p.subjects.map(s=>s.id===activeS.id?{...s,items:s.items.map(it=>it.id===iId?{...it,count:it.count+1}:it)}:s)}:p));
+  const dec=(iId)=>setProjects(prev=>prev.map(p=>p.id===activeP.id?{...p,subjects:p.subjects.map(s=>s.id===activeS.id?{...s,items:s.items.map(it=>it.id===iId?{...it,count:Math.max(0,it.count-1)}:it)}:s)}:p));
+  const saveItemName=()=>{
+    if(!editingItem||!editingItem.value.trim()){setEditingItem(null);return;}
+    setProjects(prev=>prev.map(p=>p.id===activeP.id?{...p,subjects:p.subjects.map(s=>s.id===activeS.id?{...s,items:s.items.map(it=>it.id===editingItem.id?{...it,name:editingItem.value.trim()}:it)}:s)}:p));
+    setEditingItem(null);
+  };
+  const handleItemClick=(item)=>{
+    const now=Date.now(), last=itemDblRef.current[item.id]||0;
+    if(now-last<400){ clearTimeout(pressTimer.current); setEditingItem({id:item.id,value:item.name}); }
+    itemDblRef.current[item.id]=now;
+  };
+
+  const prevMonth=()=>{if(calMonth===0){setCalYear(y=>y-1);setCalMonth(11);}else setCalMonth(m=>m-1);};
+  const nextMonth=()=>{if(calMonth===11){setCalYear(y=>y+1);setCalMonth(0);}else setCalMonth(m=>m+1);};
+
+  /* ── Render ── */
+  return(
+    <div style={{minHeight:"100vh",background:"#f0f2f8",fontFamily:"'Noto Sans KR','Apple SD Gothic Neo',sans-serif",display:"flex",flexDirection:"column",userSelect:"none"}}>
+
+      {/* ════ PROJECT BAR (구글 상단처럼) ════ */}
+      <div style={{background:"#fff",borderBottom:"1px solid #e8ecf4",boxShadow:"0 1px 8px rgba(0,0,0,0.05)",display:"flex",alignItems:"center",padding:"0 16px",gap:2,height:48,overflowX:"auto",flexShrink:0,scrollbarWidth:"none"}}>
+        {projects.map(p=>{
+          const isA=p.id===activePid;
+          return(
+            <button key={p.id} onClick={()=>handleProjClick(p)} title="더블클릭으로 편집" style={{
+              flexShrink:0,height:48,padding:"0 18px",border:"none",background:"transparent",
+              cursor:"pointer",fontWeight:isA?700:500,fontSize:14,fontFamily:"inherit",
+              color:isA?p.color:"#888",position:"relative",transition:"color 0.15s",
+              display:"flex",alignItems:"center",gap:6,
+            }}>
+              <span style={{width:7,height:7,borderRadius:"50%",background:isA?p.color:"#ddd",display:"inline-block",flexShrink:0,transition:"background 0.15s"}}/>
+              {p.name}
+              {isA&&<span style={{position:"absolute",bottom:0,left:0,right:0,height:3,background:p.color,borderRadius:"2px 2px 0 0"}}/>}
+            </button>
+          );
+        })}
+        {/* + 프로젝트 */}
+        <button onClick={()=>{setPForm({name:"",color:PRESET[0]});setPm("add");}} style={{
+          flexShrink:0,height:36,padding:"0 12px",marginLeft:4,border:"1px dashed #d0d5e8",
+          borderRadius:9,background:"transparent",cursor:"pointer",color:"#aab",
+          fontSize:12,fontWeight:600,fontFamily:"inherit",display:"flex",alignItems:"center",gap:4,
+        }}>
+          <span style={{fontSize:16,lineHeight:1}}>+</span> 프로젝트
+        </button>
+      </div>
+
+      {/* ════ BODY ════ */}
+      <div style={{display:"flex",flex:1,gap:14,padding:14,height:"calc(100vh - 48px)",boxSizing:"border-box",overflow:"hidden"}}>
+
+        {/* ══ LEFT PANEL ══ */}
+        <div style={{width:340,display:"flex",flexDirection:"column",background:"#fff",borderRadius:18,boxShadow:"0 2px 16px rgba(0,0,0,0.07)",overflow:"hidden",flexShrink:0}}>
+
+          {/* no project */}
+          {!activeP&&(
+            <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:10,color:"#ccc",padding:30}}>
+              <div style={{fontSize:32}}>📂</div>
+              <div style={{fontSize:13,textAlign:"center"}}>상단에서 프로젝트를 추가해보세요</div>
+            </div>
+          )}
+
+          {activeP&&<>
+            {/* Project label */}
+            <div style={{padding:"12px 16px 0",flexShrink:0}}>
+              <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:10}}>
+                <span style={{width:9,height:9,borderRadius:"50%",background:activeP.color,boxShadow:`0 0 6px ${activeP.color}80`,flexShrink:0}}/>
+                <span style={{fontWeight:800,fontSize:15,color:"#1a1a2e"}}>{activeP.name}</span>
+              </div>
+
+              {/* Subject tabs */}
+              <div style={{position:"relative"}}>
+                <button onClick={()=>{setSForm({name:"",color:PRESET[4]});setSm("add");}} style={{
+                  position:"absolute",top:0,right:0,zIndex:5,
+                  background:"#eef1ff",border:"1px solid #d8ddff",borderRadius:7,
+                  color:"#5C7AEA",fontWeight:700,fontSize:11,padding:"3px 8px",
+                  cursor:"pointer",display:"flex",alignItems:"center",gap:2,fontFamily:"inherit",
+                }}>
+                  <span style={{fontSize:13,lineHeight:1}}>+</span> 과목
+                </button>
+                <div style={{display:"flex",gap:3,overflowX:"auto",paddingRight:58,paddingBottom:0,scrollbarWidth:"none"}}>
+                  {(!activeP.subjects||activeP.subjects.length===0)&&
+                    <div style={{fontSize:12,color:"#ccc",padding:"6px 2px"}}>과목 없음</div>}
+                  {activeP.subjects?.map(s=>{
+                    const isA=s.id===activeSid;
+                    return(
+                      <button key={s.id} onClick={()=>handleSubjClick(s)} title="더블클릭으로 편집" style={{
+                        flexShrink:0,padding:"6px 13px",borderRadius:"9px 9px 0 0",border:"none",
+                        cursor:"pointer",fontWeight:isA?700:500,fontSize:12,fontFamily:"inherit",
+                        background:isA?s.color:"transparent",color:isA?textColor(s.color):"#aaa",
+                        transition:"all 0.15s",boxShadow:isA?`0 -2px 8px ${s.color}30`:"none",
+                      }}>
+                        <span style={{display:"inline-block",width:5,height:5,borderRadius:"50%",background:isA?"rgba(255,255,255,0.5)":s.color,marginRight:4,verticalAlign:"middle"}}/>
+                        {s.name}
+                      </button>
+                    );
+                  })}
                 </div>
-            );
-        }
-        function MInput({label,value,onChange,onEnter,borderColor="#eee"}){
-            return(
-                <>
-                    <label style={{fontSize:12,fontWeight:600,color:"#999",display:"block",marginBottom:5}}>{label}</label>
-                    <input autoFocus value={value} onChange={e=>onChange(e.target.value)} onKeyDown={e=>e.key==="Enter"&&onEnter()}
-                        style={{width:"100%",padding:"9px 12px",borderRadius:10,boxSizing:"border-box",border:`1.5px solid ${borderColor}`,fontSize:14,outline:"none",fontFamily:"inherit",marginBottom:14}}/>
-                </>
-            );
-        }
-        function ColorPicker({value,onChange}){
-            return(
-                <>
-                    <label style={{fontSize:12,fontWeight:600,color:"#999",display:"block",marginBottom:7}}>색상</label>
-                    <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:9}}>
-                        {PRESET.map(c=>(
-                            <div key={c} onClick={()=>onChange(c)} style={{width:26,height:26,borderRadius:"50%",background:c,cursor:"pointer",border:value===c?"3px solid #1a1a2e":"3px solid transparent",transform:value===c?"scale(1.2)":"scale(1)",transition:"transform 0.1s",boxShadow:`0 2px 5px ${c}55`}}/>
-                        ))}
-                    </div>
-                    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:20}}>
-                        <input type="color" value={value} onChange={e=>onChange(e.target.value)} style={{width:28,height:28,borderRadius:7,border:"1.5px solid #eee",cursor:"pointer",padding:2}}/>
-                        <span style={{fontSize:11,color:"#bbb"}}>직접 선택</span>
-                    </div>
-                </>
-            );
-        }
-        function MActions({onCancel,onConfirm,disabled,color,label}){
-            return(
-                <div style={{display:"flex",gap:8}}>
-                    <button onClick={onCancel} style={{flex:1,padding:"9px",borderRadius:10,border:"1.5px solid #eee",background:"#fff",cursor:"pointer",fontWeight:600,fontSize:13,fontFamily:"inherit"}}>취소</button>
-                    <button onClick={onConfirm} style={{flex:2,padding:"9px",borderRadius:10,border:"none",background:disabled?"#f0f0f0":color,color:disabled?"#bbb":textColor(color),cursor:disabled?"default":"pointer",fontWeight:700,fontSize:13,fontFamily:"inherit",boxShadow:disabled?"none":`0 4px 12px ${color}40`}}>{label}</button>
+              </div>
+            </div>
+
+            {/* Subject color bar */}
+            <div style={{height:3,background:activeS?.color||"#eee",flexShrink:0,marginTop:0}}/>
+
+            {/* List header */}
+            {activeS&&(
+              <div style={{padding:"10px 14px 8px",display:"flex",alignItems:"center",justifyContent:"space-between",borderBottom:"1px solid #f8f8f8",flexShrink:0}}>
+                <div>
+                  <span style={{fontWeight:700,fontSize:14,color:"#1a1a2e"}}>{activeS.name}</span>
+                  <span style={{fontSize:11,color:"#bbb",marginLeft:6}}>{activeS.items?.length||0}개</span>
                 </div>
-            );
-        }
+                <div style={{display:"flex",gap:6}}>
+                  <button onClick={()=>setIm(true)} style={{
+                    background:activeS.color,border:"none",borderRadius:8,color:textColor(activeS.color),
+                    fontWeight:700,fontSize:15,width:26,height:26,cursor:"pointer",
+                    display:"flex",alignItems:"center",justifyContent:"center",
+                    boxShadow:`0 2px 8px ${activeS.color}40`,fontFamily:"inherit",
+                  }}>+</button>
+                  <button onClick={()=>{setSForm({name:activeS.name,color:activeS.color});setSm({edit:activeS});}} style={{
+                    background:"#f5f5f5",border:"none",borderRadius:7,color:"#bbb",fontSize:11,
+                    padding:"4px 8px",cursor:"pointer",fontFamily:"inherit",fontWeight:600,
+                  }}>편집</button>
+                </div>
+              </div>
+            )}
 
-        function App(){
-            const today = new Date();
+            {/* Items */}
+            <div style={{flex:1,overflowY:"auto",padding:"10px 11px"}}>
+              {!activeS&&(
+                <div style={{textAlign:"center",color:"#ccc",padding:"36px 0",fontSize:12}}>과목을 추가해보세요</div>
+              )}
+              {activeS?.items?.length===0&&(
+                <div style={{textAlign:"center",color:"#ccc",padding:"30px 0",fontSize:12}}>+ 버튼으로 항목을 추가하세요</div>
+              )}
+              {activeS?.items?.map((item,idx)=>{
+                const isEd=editingItem?.id===item.id;
+                return(
+                  <div key={item.id}
+                    onMouseDown={e=>{if(!isEd)startPress(e,item,activeS,activeP);}}
+                    onTouchStart={e=>{if(!isEd)startPress(e,item,activeS,activeP);}}
+                    onMouseLeave={()=>{if(!dragging.current)clearTimeout(pressTimer.current);}}
+                    onClick={()=>handleItemClick(item)}
+                    style={{
+                      display:"flex",alignItems:"center",gap:8,
+                      padding:"9px 10px",borderRadius:11,marginBottom:6,
+                      background:"#fafafa",border:`1.5px solid ${isEd?activeS.color+"80":"#f0f0f0"}`,
+                      cursor:isEd?"default":"grab",touchAction:"none",
+                      transition:"box-shadow 0.12s,border-color 0.12s",
+                    }}
+                    onMouseEnter={e=>{if(!isEd){e.currentTarget.style.boxShadow=`0 2px 8px ${activeS.color}25`;e.currentTarget.style.borderColor=`${activeS.color}55`;}}}
+                  >
+                    <div style={{display:"flex",flexDirection:"column",gap:2.5,flexShrink:0,opacity:0.18}}>
+                      {[0,1,2].map(i=>(
+                        <div key={i} style={{display:"flex",gap:2}}>
+                          <div style={{width:2.5,height:2.5,borderRadius:"50%",background:"#555"}}/>
+                          <div style={{width:2.5,height:2.5,borderRadius:"50%",background:"#555"}}/>
+                        </div>
+                      ))}
+                    </div>
+                    <span style={{fontSize:10,color:"#d8d8d8",fontWeight:600,width:14,textAlign:"right",flexShrink:0}}>{idx+1}</span>
+                    {isEd?(
+                      <input autoFocus value={editingItem.value}
+                        onChange={e=>setEditingItem(ei=>({...ei,value:e.target.value}))}
+                        onKeyDown={e=>{if(e.key==="Enter")saveItemName();if(e.key==="Escape")setEditingItem(null);}}
+                        onBlur={saveItemName}
+                        onMouseDown={e=>e.stopPropagation()} onClick={e=>e.stopPropagation()}
+                        style={{flex:1,fontSize:13,fontWeight:500,color:"#2d2d2d",border:"none",outline:"none",background:"transparent",fontFamily:"inherit",padding:0}}
+                      />
+                    ):(
+                      <span style={{flex:1,fontSize:13,fontWeight:500,color:"#2d2d2d"}}>{item.name}</span>
+                    )}
+                    <div style={{display:"flex",alignItems:"center",gap:4,flexShrink:0}}>
+                      <button onMouseDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();dec(item.id);}} style={{width:21,height:21,borderRadius:6,border:"1.5px solid #e8e8e8",background:"#fff",color:"#bbb",fontSize:13,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>−</button>
+                      <div style={{background:item.count>0?activeS.color:"#f0f0f0",color:item.count>0?textColor(activeS.color):"#ccc",borderRadius:6,padding:"2px 7px",fontSize:11,fontWeight:700,minWidth:36,textAlign:"center",transition:"all 0.2s",boxShadow:item.count>0?`0 2px 5px ${activeS.color}40`:"none"}}>{item.count}회독</div>
+                      <button onMouseDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();inc(item.id);}} style={{width:21,height:21,borderRadius:6,border:"none",background:activeS.color,color:textColor(activeS.color),fontSize:12,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:`0 2px 5px ${activeS.color}45`}}>✓</button>
+                    </div>
+                    <button onMouseDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();removeItem(item.id);}} style={{background:"none",border:"none",color:"#e0e0e0",cursor:"pointer",fontSize:11,padding:"0 2px",flexShrink:0}}>✕</button>
+                  </div>
+                );
+              })}
+            </div>
 
-            /* ── State ── */
-            const [projects,  setProjects]  = useState([]); 
-            const [activePid, setActivePid] = useState("");
-            const [activeSid, setActiveSid] = useState("");
-            const [plans,      setPlans]     = useState({});
-            const [calYear,   setCalYear]   = useState(today.getFullYear());
-            const [calMonth,  setCalMonth]  = useState(today.getMonth());
-            const [hovKey,    setHovKey]    = useState(null);
+            <div style={{padding:"7px 14px",borderTop:"1px solid #f5f5f5",background:"#fafbff",fontSize:10,color:"#c8c8c8",textAlign:"center",flexShrink:0}}>
+              꾹 눌러 달력으로 드래그 · 더블클릭으로 이름 편집
+            </div>
+          </>}
+        </div>
 
-            /* drag */
-            const [ghost,      setGhost]    = useState(null);
-            const dragRef      = useRef(null);
-            const pressTimer   = useRef(null);
-            const dragging     = useRef(false);
-
-            /* modals */
-            const [pm,  setPm]  = useState(null); 
-            const [sm,  setSm]  = useState(null); 
-            const [im,  setIm]  = useState(false);
-            const [pForm, setPForm] = useState({name:"",color:PRESET[0]});
-            const [sForm, setSForm] = useState({name:"",color:PRESET[4]});
-            const [iName, setIName] = useState("");
-            const [editingItem, setEditingItem] = useState(null);
-            const itemDblRef = useRef({});
-            const dblRef     = useRef({});
-
-            /* storage */
-            const [loaded, setLoaded] = useState(false);
-            useEffect(()=>{
-                load().then(d=>{
-                    if(d){
-                        if(d.projects) setProjects(d.projects);
-                        if(d.activePid) setActivePid(d.activePid);
-                        if(d.activeSid) setActiveSid(d.activeSid);
-                        if(d.plans)     setPlans(d.plans);
+        {/* ══ CALENDAR ══ */}
+        <div style={{flex:1,display:"flex",flexDirection:"column",background:"#fff",borderRadius:18,boxShadow:"0 2px 16px rgba(0,0,0,0.07)",overflow:"hidden"}}>
+          <div style={{padding:"14px 20px",borderBottom:"1px solid #f0f0f5",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
+            <button onClick={prevMonth} style={{background:"#f5f6fa",border:"none",borderRadius:9,width:30,height:30,cursor:"pointer",fontSize:17,display:"flex",alignItems:"center",justifyContent:"center",color:"#666"}}>‹</button>
+            <span style={{fontWeight:800,fontSize:16,color:"#1a1a2e"}}>{calYear}년 {calMonth+1}월</span>
+            <button onClick={nextMonth} style={{background:"#f5f6fa",border:"none",borderRadius:9,width:30,height:30,cursor:"pointer",fontSize:17,display:"flex",alignItems:"center",justifyContent:"center",color:"#666"}}>›</button>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",padding:"5px 12px 0",flexShrink:0}}>
+            {DAYS.map((d,i)=>(
+              <div key={d} style={{textAlign:"center",fontSize:11,fontWeight:700,padding:"4px 0",color:i===0?"#ff5c5c":i===6?"#5C7AEA":"#bbb"}}>{d}</div>
+            ))}
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",padding:"3px 12px 12px",gap:3,flex:1,alignContent:"start",overflowY:"auto"}}>
+            {calCells.map((cell,idx)=>{
+              const key=dk(cell.year,cell.month,cell.day);
+              const dayPlans=plans[key]||[];
+              const isToday=!cell.isPrev&&cell.day===today.getDate()&&calYear===today.getFullYear()&&calMonth===today.getMonth();
+              const isHov=hovKey===key&&!!ghost;
+              const dow=idx%7;
+              return(
+                <div key={idx} data-daykey={key} style={{
+                  minHeight:80,borderRadius:9,padding:"4px 4px",
+                  background:isHov?"rgba(92,122,234,0.07)":isToday?"rgba(92,122,234,0.04)":"#fff",
+                  border:isHov?"2px dashed #5C7AEA":isToday?"2px solid rgba(92,122,234,0.22)":"1px solid #f0f0f5",
+                  transition:"background 0.1s,border 0.1s",position:"relative",boxSizing:"border-box",
+                  opacity:cell.isPrev?0.4:1,
+                }}>
+                  <div style={{fontSize:11,fontWeight:isToday?800:400,marginBottom:2}}>
+                    {isToday
+                      ?<span style={{background:"#5C7AEA",color:"#fff",borderRadius:5,width:17,height:17,display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:800}}>{cell.day}</span>
+                      :<span style={{color:cell.isPrev?"#bbb":dow===0?"#ff6060":dow===6?"#7090ee":"#999"}}>{cell.day}</span>
                     }
-                    setLoaded(true);
-                });
-            },[]);
-            useEffect(()=>{
-                if(!loaded) return;
-                save({projects,activePid,activeSid,plans});
-            },[projects,activePid,activeSid,plans,loaded]);
-
-            /* derived */
-            const activeP = projects.find(p=>p.id===activePid)||projects[0];
-            const activeS = activeP?.subjects?.find(s=>s.id===activeSid)||activeP?.subjects?.[0];
-            const calCells = getCalCells(calYear,calMonth);
-
-            /* keep activeSid in sync when project changes */
-            useEffect(()=>{
-                if(activeP && (!activeSid || !activeP.subjects?.find(s=>s.id===activeSid))){
-                    setActiveSid(activeP.subjects?.[0]?.id||"");
-                }
-            },[activePid,activeP]);
-
-            /* ── Drag ── */
-            const startPress=(e,item,subj,proj)=>{
-                e.preventDefault();
-                const cx=e.touches?e.touches[0].clientX:e.clientX;
-                const cy=e.touches?e.touches[0].clientY:e.clientY;
-                pressTimer.current=setTimeout(()=>{
-                    dragging.current=true;
-                    dragRef.current={itemId:item.id,itemName:item.name,subjectId:subj.id,projectId:proj.id,color:subj.color};
-                    setGhost({x:cx,y:cy,itemName:item.name,color:subj.color});
-                    if (navigator.vibrate) navigator.vibrate(30);
-                },500);
-            };
-            const movePress=(e)=>{
-                if(!dragging.current) return;
-                const cx=e.touches?e.touches[0].clientX:e.clientX;
-                const cy=e.touches?e.touches[0].clientY:e.clientY;
-                setGhost(g=>g?{...g,x:cx,y:cy}:null);
-                const el=document.elementFromPoint(cx,cy);
-                const cell=el?.closest("[data-daykey]");
-                setHovKey(cell?cell.dataset.daykey:null);
-            };
-            const endPress=()=>{
-                clearTimeout(pressTimer.current);
-                if(dragging.current&&hovKey&&dragRef.current){
-                    const d=dragRef.current;
-                    setPlans(prev=>({...prev,[hovKey]:[...(prev[hovKey]||[]),{planId:gid(),projectId:d.projectId,subjectId:d.subjectId,itemId:d.itemId}]}));
-                }
-                dragging.current=false; dragRef.current=null; setGhost(null); setHovKey(null);
-            };
-            useEffect(()=>{
-                window.addEventListener("mousemove",movePress);
-                window.addEventListener("mouseup",endPress);
-                window.addEventListener("touchmove",movePress,{passive:true});
-                window.addEventListener("touchend",endPress);
-                return()=>{
-                    window.removeEventListener("mousemove",movePress);
-                    window.removeEventListener("mouseup",endPress);
-                    window.removeEventListener("touchmove",movePress);
-                    window.removeEventListener("touchend",endPress);
-                };
-            },[hovKey]);
-
-            /* ── Plans ── */
-            const removePlan=(key,planId)=>setPlans(prev=>{
-                const u=(prev[key]||[]).filter(p=>p.planId!==planId);
-                const n={...prev}; if(u.length===0)delete n[key]; else n[key]=u; return n;
-            });
-
-            /* ── Project CRUD ── */
-            const addProject=()=>{
-                if(!pForm.name.trim()) return;
-                const id=gid();
-                setProjects(prev=>[...prev,{id,name:pForm.name.trim(),color:pForm.color,subjects:[]}]);
-                setActivePid(id); setPForm({name:"",color:PRESET[0]}); setPm(null);
-            };
-            const saveProject=()=>{
-                if(!pForm.name.trim()) return;
-                setProjects(prev=>prev.map(p=>p.id===pm.edit.id?{...p,name:pForm.name.trim(),color:pForm.color}:p));
-                setPm(null);
-            };
-            const deleteProject=(id)=>{
-                const rest=projects.filter(p=>p.id!==id);
-                setProjects(rest); setActivePid(rest[0]?.id||""); setPm(null);
-                setPlans(prev=>{const n={};for(const[k,arr]of Object.entries(prev)){const f=arr.filter(e=>e.projectId!==id);if(f.length)n[k]=f;}return n;});
-            };
-            const handleProjClick=(p)=>{
-                const now=Date.now(), last=dblRef.current["p_"+p.id]||0;
-                if(now-last<400){ setPForm({name:p.name,color:p.color}); setPm({edit:p}); }
-                else setActivePid(p.id);
-                dblRef.current["p_"+p.id]=now;
-            };
-
-            /* ── Subject CRUD ── */
-            const addSubject=()=>{
-                if(!sForm.name.trim()||!activeP) return;
-                const id=gid();
-                setProjects(prev=>prev.map(p=>p.id===activeP.id?{...p,subjects:[...(p.subjects||[]),{id,name:sForm.name.trim(),color:sForm.color,items:[]}]}:p));
-                setActiveSid(id); setSForm({name:"",color:PRESET[4]}); setSm(null);
-            };
-            const saveSubject=()=>{
-                if(!sForm.name.trim()) return;
-                setProjects(prev=>prev.map(p=>p.id===activeP.id?{...p,subjects:p.subjects.map(s=>s.id===sm.edit.id?{...s,name:sForm.name.trim(),color:sForm.color}:s)}:p));
-                setSm(null);
-            };
-            const deleteSubject=(id)=>{
-                setProjects(prev=>prev.map(p=>p.id===activeP.id?{...p,subjects:p.subjects.filter(s=>s.id!==id)}:p));
-                setActiveSid(activeP.subjects?.find(s=>s.id!==id)?.id||""); setSm(null);
-                setPlans(prev=>{const n={};for(const[k,arr]of Object.entries(prev)){const f=arr.filter(e=>e.subjectId!==id);if(f.length)n[k]=f;}return n;});
-            };
-            const handleSubjClick=(s)=>{
-                const now=Date.now(), last=dblRef.current["s_"+s.id]||0;
-                if(now-last<400){ setSForm({name:s.name,color:s.color}); setSm({edit:s}); }
-                else setActiveSid(s.id);
-                dblRef.current["s_"+s.id]=now;
-            };
-
-            /* ── Item CRUD ── */
-            const addItem=()=>{
-                if(!iName.trim()||!activeP||!activeS) return;
-                const id=gid();
-                setProjects(prev=>prev.map(p=>p.id===activeP.id?{...p,subjects:p.subjects.map(s=>s.id===activeS.id?{...s,items:[...s.items,{id,name:iName.trim(),count:0}]}:s)}:p));
-                setIName(""); setIm(false);
-            };
-            const removeItem=(iId)=>{
-                setProjects(prev=>prev.map(p=>p.id===activeP.id?{...p,subjects:p.subjects.map(s=>s.id===activeS.id?{...s,items:s.items.filter(it=>it.id!==iId)}:s)}:p));
-                setPlans(prev=>{const n={};for(const[k,arr]of Object.entries(prev)){const f=arr.filter(e=>!(e.subjectId===activeS.id&&e.itemId===iId));if(f.length)n[k]=f;}return n;});
-            };
-            const inc=(iId)=>setProjects(prev=>prev.map(p=>p.id===activeP.id?{...p,subjects:p.subjects.map(s=>s.id===activeS.id?{...s,items:s.items.map(it=>it.id===iId?{...it,count:it.count+1}:it)}:s)}:p));
-            const dec=(iId)=>setProjects(prev=>prev.map(p=>p.id===activeP.id?{...p,subjects:p.subjects.map(s=>s.id===activeS.id?{...s,items:s.items.map(it=>it.id===iId?{...it,count:Math.max(0,it.count-1)}:it)}:s)}:p));
-            const saveItemName=()=>{
-                if(!editingItem||!editingItem.value.trim()){setEditingItem(null);return;}
-                setProjects(prev=>prev.map(p=>p.id===activeP.id?{...p,subjects:p.subjects.map(s=>s.id===activeS.id?{...s,items:s.items.map(it=>it.id===editingItem.id?{...it,name:editingItem.value.trim()}:it)}:s)}:p));
-                setEditingItem(null);
-            };
-            const handleItemClick=(item)=>{
-                const now=Date.now(), last=itemDblRef.current[item.id]||0;
-                if(now-last<400){ clearTimeout(pressTimer.current); setEditingItem({id:item.id,value:item.name}); }
-                itemDblRef.current[item.id]=now;
-            };
-
-            const prevMonth=()=>{if(calMonth===0){setCalYear(y=>y-1);setCalMonth(11);}else setCalMonth(m=>m-1);};
-            const nextMonth=()=>{if(calMonth===11){setCalYear(y=>y+1);setCalMonth(0);}else setCalMonth(m=>m+1);};
-
-            return(
-                <div style={{minHeight:"100vh",background:"#f0f2f8",fontFamily:"'Noto Sans KR','Apple SD Gothic Neo',sans-serif",display:"flex",flexDirection:"column",userSelect:"none"}}>
-
-                    {/* ════ PROJECT BAR ════ */}
-                    <div style={{background:"#fff",borderBottom:"1px solid #e8ecf4",boxShadow:"0 1px 8px rgba(0,0,0,0.05)",display:"flex",alignItems:"center",padding:"0 16px",gap:2,height:48,overflowX:"auto",flexShrink:0,scrollbarWidth:"none"}}>
-                        {projects.map(p=>{
-                            const isA=p.id===activePid;
-                            return(
-                                <button key={p.id} onClick={()=>handleProjClick(p)} title="더블클릭으로 편집" style={{
-                                    flexShrink:0,height:48,padding:"0 18px",border:"none",background:"transparent",
-                                    cursor:"pointer",fontWeight:isA?700:500,fontSize:14,fontFamily:"inherit",
-                                    color:isA?p.color:"#888",position:"relative",transition:"color 0.15s",
-                                    display:"flex",alignItems:"center",gap:6,
-                                }}>
-                                    <span style={{width:7,height:7,borderRadius:"50%",background:isA?p.color:"#ddd",display:"inline-block",flexShrink:0,transition:"background 0.15s"}}/>
-                                    {p.name}
-                                    {isA&&<span style={{position:"absolute",bottom:0,left:0,right:0,height:3,background:p.color,borderRadius:"2px 2px 0 0"}}/>}
-                                </button>
-                            );
-                        })}
-                        <button onClick={()=>{setPForm({name:"",color:PRESET[0]});setPm("add");}} style={{
-                            flexShrink:0,height:36,padding:"0 12px",marginLeft:4,border:"1px dashed #d0d5e8",
-                            borderRadius:9,background:"transparent",cursor:"pointer",color:"#aab",
-                            fontSize:12,fontWeight:600,fontFamily:"inherit",display:"flex",alignItems:"center",gap:4,
-                        }}>
-                            <span style={{fontSize:16,lineHeight:1}}>+</span> 프로젝트
-                        </button>
+                  </div>
+                  <div style={{display:"flex",flexDirection:"column",gap:2}}>
+                    {dayPlans.map(plan=>{
+                      const proj=projects.find(p=>p.id===plan.projectId);
+                      const subj=proj?.subjects?.find(s=>s.id===plan.subjectId);
+                      const item=subj?.items?.find(it=>it.id===plan.itemId);
+                      if(!subj||!item) return null;
+                      return(
+                        <div key={plan.planId} onClick={()=>removePlan(key,plan.planId)}
+                          title={`${proj.name} / ${subj.name} - ${item.name}`}
+                          style={{background:subj.color,color:textColor(subj.color),borderRadius:4,padding:"2px 4px",fontSize:9,fontWeight:600,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",boxShadow:`0 1px 3px ${subj.color}45`}}
+                          onMouseEnter={e=>e.currentTarget.style.opacity="0.7"}
+                          onMouseLeave={e=>e.currentTarget.style.opacity="1"}
+                        >{item.name}</div>
+                      );
+                    })}
+                  </div>
+                  {isHov&&ghost&&(
+                    <div style={{position:"absolute",inset:0,borderRadius:9,display:"flex",alignItems:"center",justifyContent:"center",pointerEvents:"none",background:`${ghost.color}10`}}>
+                      <span style={{background:ghost.color,color:textColor(ghost.color),borderRadius:5,padding:"2px 7px",fontSize:9,fontWeight:700,opacity:0.9,maxWidth:"88%",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>+ {ghost.itemName}</span>
                     </div>
-
-                    {/* ════ BODY ════ */}
-                    <div style={{display:"flex",flex:1,gap:14,padding:14,height:"calc(100vh - 48px)",boxSizing:"border-box",overflow:"hidden"}}>
-
-                        {/* ══ LEFT PANEL ══ */}
-                        <div style={{width:340,display:"flex",flexDirection:"column",background:"#fff",borderRadius:18,boxShadow:"0 2px 16px rgba(0,0,0,0.07)",overflow:"hidden",flexShrink:0}}>
-
-                            {!activeP&&(
-                                <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:10,color:"#ccc",padding:30}}>
-                                    <div style={{fontSize:32}}>📂</div>
-                                    <div style={{fontSize:13,textAlign:"center"}}>상단에서 프로젝트를 추가해보세요</div>
-                                </div>
-                            )}
-
-                            {activeP&&<>
-                                <div style={{padding:"12px 16px 0",flexShrink:0}}>
-                                    <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:10}}>
-                                        <span style={{width:9,height:9,borderRadius:"50%",background:activeP.color,boxShadow:`0 0 6px ${activeP.color}80`,flexShrink:0}}/>
-                                        <span style={{fontWeight:800,fontSize:15,color:"#1a1a2e"}}>{activeP.name}</span>
-                                    </div>
-
-                                    <div style={{position:"relative"}}>
-                                        <button onClick={()=>{setSForm({name:"",color:PRESET[4]});setSm("add");}} style={{
-                                            position:"absolute",top:0,right:0,zIndex:5,
-                                            background:"#eef1ff",border:"1px solid #d8ddff",borderRadius:7,
-                                            color:"#5C7AEA",fontWeight:700,fontSize:11,padding:"3px 8px",
-                                            cursor:"pointer",display:"flex",alignItems:"center",gap:2,fontFamily:"inherit",
-                                        }}>
-                                            <span style={{fontSize:13,lineHeight:1}}>+</span> 과목
-                                        </button>
-                                        <div style={{display:"flex",gap:3,overflowX:"auto",paddingRight:58,paddingBottom:0,scrollbarWidth:"none"}}>
-                                            {(!activeP.subjects||activeP.subjects.length===0)&&
-                                                <div style={{fontSize:12,color:"#ccc",padding:"6px 2px"}}>과목 없음</div>}
-                                            {activeP.subjects?.map(s=>{
-                                                const isA=s.id===activeSid;
-                                                return(
-                                                    <button key={s.id} onClick={()=>handleSubjClick(s)} title="더블클릭으로 편집" style={{
-                                                        flexShrink:0,padding:"6px 13px",borderRadius:"9px 9px 0 0",border:"none",
-                                                        cursor:"pointer",fontWeight:isA?700:500,fontSize:12,fontFamily:"inherit",
-                                                        background:isA?s.color:"transparent",color:isA?textColor(s.color):"#aaa",
-                                                        transition:"all 0.15s",boxShadow:isA?`0 -2px 8px ${s.color}30`:"none",
-                                                    }}>
-                                                        <span style={{display:"inline-block",width:5,height:5,borderRadius:"50%",background:isA?"rgba(255,255,255,0.5)":s.color,marginRight:4,verticalAlign:"middle"}}/>
-                                                        {s.name}
-                                                    </button>
-                                                );
-                                            })}
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div style={{height:3,background:activeS?.color||"#eee",flexShrink:0,marginTop:0}}/>
-
-                                {activeS&&(
-                                    <div style={{padding:"10px 14px 8px",display:"flex",alignItems:"center",justifyContent:"space-between",borderBottom:"1px solid #f8f8f8",flexShrink:0}}>
-                                        <div>
-                                            <span style={{fontWeight:700,fontSize:14,color:"#1a1a2e"}}>{activeS.name}</span>
-                                            <span style={{fontSize:11,color:"#bbb",marginLeft:6}}>{activeS.items?.length||0}개</span>
-                                        </div>
-                                        <div style={{display:"flex",gap:6}}>
-                                            <button onClick={()=>setIm(true)} style={{
-                                                background:activeS.color,border:"none",borderRadius:8,color:textColor(activeS.color),
-                                                fontWeight:700,fontSize:15,width:26,height:26,cursor:"pointer",
-                                                display:"flex",alignItems:"center",justifyContent:"center",
-                                                boxShadow:`0 2px 8px ${activeS.color}40`,fontFamily:"inherit",
-                                            }}>+</button>
-                                            <button onClick={()=>{setSForm({name:activeS.name,color:activeS.color});setSm({edit:activeS});}} style={{
-                                                background:"#f5f5f5",border:"none",borderRadius:7,color:"#bbb",fontSize:11,
-                                                padding:"4px 8px",cursor:"pointer",fontFamily:"inherit",fontWeight:600,
-                                            }}>편집</button>
-                                        </div>
-                                    </div>
-                                )}
-
-                                <div style={{flex:1,overflowY:"auto",padding:"10px 11px"}}>
-                                    {!activeS&&(
-                                        <div style={{textAlign:"center",color:"#ccc",padding:"36px 0",fontSize:12}}>과목을 추가해보세요</div>
-                                    )}
-                                    {activeS?.items?.length===0&&(
-                                        <div style={{textAlign:"center",color:"#ccc",padding:"30px 0",fontSize:12}}>+ 버튼으로 항목을 추가하세요</div>
-                                    )}
-                                    {activeS?.items?.map((item,idx)=>{
-                                        const isEd=editingItem?.id===item.id;
-                                        return(
-                                            <div key={item.id}
-                                                onMouseDown={e=>{if(!isEd)startPress(e,item,activeS,activeP);}}
-                                                onTouchStart={e=>{if(!isEd)startPress(e,item,activeS,activeP);}}
-                                                onMouseLeave={()=>{if(!dragging.current)clearTimeout(pressTimer.current);}}
-                                                onClick={()=>handleItemClick(item)}
-                                                style={{
-                                                    display:"flex",alignItems:"center",gap:8,
-                                                    padding:"9px 10px",borderRadius:11,marginBottom:6,
-                                                    background:"#fafafa",border:`1.5px solid ${isEd?activeS.color+"80":"#f0f0f0"}`,
-                                                    cursor:isEd?"default":"grab",touchAction:"none",
-                                                    transition:"box-shadow 0.12s,border-color 0.12s",
-                                                }}
-                                                onMouseEnter={e=>{if(!isEd){e.currentTarget.style.boxShadow=`0 2px 8px ${activeS.color}25`;e.currentTarget.style.borderColor=`${activeS.color}55`;}}}
-                                            >
-                                                <div style={{display:"flex",flexDirection:"column",gap:2.5,flexShrink:0,opacity:0.18}}>
-                                                    {[0,1,2].map(i=>(
-                                                        <div key={i} style={{display:"flex",gap:2}}>
-                                                            <div style={{width:2.5,height:2.5,borderRadius:"50%",background:"#555"}}/>
-                                                            <div style={{width:2.5,height:2.5,borderRadius:"50%",background:"#555"}}/>
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                                <span style={{fontSize:10,color:"#d8d8d8",fontWeight:600,width:14,textAlign:"right",flexShrink:0}}>{idx+1}</span>
-                                                {isEd?(
-                                                    <input autoFocus value={editingItem.value}
-                                                        onChange={e=>setEditingItem(ei=>({...ei,value:e.target.value}))}
-                                                        onKeyDown={e=>{if(e.key==="Enter")saveItemName();if(e.key==="Escape")setEditingItem(null);}}
-                                                        onBlur={saveItemName}
-                                                        onMouseDown={e=>e.stopPropagation()} onClick={e=>e.stopPropagation()}
-                                                        style={{flex:1,fontSize:13,fontWeight:500,color:"#2d2d2d",border:"none",outline:"none",background:"transparent",fontFamily:"inherit",padding:0}}
-                                                    />
-                                                ):(
-                                                    <span style={{flex:1,fontSize:13,fontWeight:500,color:"#2d2d2d"}}>{item.name}</span>
-                                                )}
-                                                <div style={{display:"flex",alignItems:"center",gap:4,flexShrink:0}}>
-                                                    <button onMouseDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();dec(item.id);}} style={{width:21,height:21,borderRadius:6,border:"1.5px solid #e8e8e8",background:"#fff",color:"#bbb",fontSize:13,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>−</button>
-                                                    <div style={{background:item.count>0?activeS.color:"#f0f0f0",color:item.count>0?textColor(activeS.color):"#ccc",borderRadius:6,padding:"2px 7px",fontSize:11,fontWeight:700,minWidth:36,textAlign:"center",transition:"all 0.2s",boxShadow:item.count>0?`0 2px 5px ${activeS.color}40`:"none"}}>{item.count}회독</div>
-                                                    <button onMouseDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();inc(item.id);}} style={{width:21,height:21,borderRadius:6,border:"none",background:activeS.color,color:textColor(activeS.color),fontSize:12,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:`0 2px 5px ${activeS.color}45`}}>✓</button>
-                                                </div>
-                                                <button onMouseDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();removeItem(item.id);}} style={{background:"none",border:"none",color:"#e0e0e0",cursor:"pointer",fontSize:11,padding:"0 2px",flexShrink:0}}>✕</button>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-
-                                <div style={{padding:"7px 14px",borderTop:"1px solid #f5f5f5",background:"#fafbff",fontSize:10,color:"#c8c8c8",textAlign:"center",flexShrink:0}}>
-                                    꾹 눌러 달력으로 드래그 · 더블클릭으로 이름 편집
-                                </div>
-                            </>}
-                        </div>
-
-                        {/* ══ CALENDAR ══ */}
-                        <div style={{flex:1,display:"flex",flexDirection:"column",background:"#fff",borderRadius:18,boxShadow:"0 2px 16px rgba(0,0,0,0.07)",overflow:"hidden"}}>
-                            <div style={{padding:"14px 20px",borderBottom:"1px solid #f0f0f5",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
-                                <button onClick={prevMonth} style={{background:"#f5f6fa",border:"none",borderRadius:9,width:30,height:30,cursor:"pointer",fontSize:17,display:"flex",alignItems:"center",justifyContent:"center",color:"#666"}}>‹</button>
-                                <span style={{fontWeight:800,fontSize:16,color:"#1a1a2e"}}>{calYear}년 {calMonth+1}월</span>
-                                <button onClick={nextMonth} style={{background:"#f5f6fa",border:"none",borderRadius:9,width:30,height:30,cursor:"pointer",fontSize:17,display:"flex",alignItems:"center",justifyContent:"center",color:"#666"}}>›</button>
-                            </div>
-                            <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",padding:"5px 12px 0",flexShrink:0}}>
-                                {DAYS.map((d,i)=>(
-                                    <div key={d} style={{textAlign:"center",fontSize:11,fontWeight:700,padding:"4px 0",color:i===0?"#ff5c5c":i===6?"#5C7AEA":"#bbb"}}>{d}</div>
-                                ))}
-                            </div>
-                            <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",padding:"3px 12px 12px",gap:3,flex:1,alignContent:"start",overflowY:"auto"}}>
-                                {calCells.map((cell,idx)=>{
-                                    const key=dk(cell.year,cell.month,cell.day);
-                                    const dayPlans=plans[key]||[];
-                                    const isToday=!cell.isPrev&&cell.day===today.getDate()&&calYear===today.getFullYear()&&calMonth===today.getMonth();
-                                    const isHov=hovKey===key&&!!ghost;
-                                    const dow=idx%7;
-                                    return(
-                                        <div key={idx} data-daykey={key} style={{
-                                            minHeight:80,borderRadius:9,padding:"4px 4px",
-                                            background:isHov?"rgba(92,122,234,0.07)":isToday?"rgba(92,122,234,0.04)":"#fff",
-                                            border:isHov?"2px dashed #5C7AEA":isToday?"2px solid rgba(92,122,234,0.22)":"1px solid #f0f0f5",
-                                            transition:"background 0.1s,border 0.1s",position:"relative",boxSizing:"border-box",
-                                            opacity:cell.isPrev?0.4:1,
-                                        }}>
-                                            <div style={{fontSize:11,fontWeight:isToday?800:400,marginBottom:2}}>
-                                                {isToday
-                                                    ?<span style={{background:"#5C7AEA",color:"#fff",borderRadius:5,width:17,height:17,display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:800}}>{cell.day}</span>
-                                                    :<span style={{color:cell.isPrev?"#bbb":dow===0?"#ff6060":dow===6?"#7090ee":"#999"}}>{cell.day}</span>
-                                                }
-                                            </div>
-                                            <div style={{display:"flex",flexDirection:"column",gap:2}}>
-                                                {dayPlans.map(plan=>{
-                                                    const proj=projects.find(p=>p.id===plan.projectId);
-                                                    const subj=proj?.subjects?.find(s=>s.id===plan.subjectId);
-                                                    const item=subj?.items?.find(it=>it.id===plan.itemId);
-                                                    if(!subj||!item) return null;
-                                                    return(
-                                                        <div key={plan.planId} onClick={()=>removePlan(key,plan.planId)}
-                                                            title={`${proj.name} / ${subj.name} - ${item.name}`}
-                                                            style={{background:subj.color,color:textColor(subj.color),borderRadius:4,padding:"2px 4px",fontSize:9,fontWeight:600,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",boxShadow:`0 1px 3px ${subj.color}45`}}
-                                                            onMouseEnter={e=>e.currentTarget.style.opacity="0.7"}
-                                                            onMouseLeave={e=>e.currentTarget.style.opacity="1"}
-                                                        >{item.name}</div>
-                                                    );
-                                                })}
-                                            </div>
-                                            {isHov&&ghost&&(
-                                                <div style={{position:"absolute",inset:0,borderRadius:9,display:"flex",alignItems:"center",justifyContent:"center",pointerEvents:"none",background:`${ghost.color}10`}}>
-                                                    <span style={{background:ghost.color,color:textColor(ghost.color),borderRadius:5,padding:"2px 7px",fontSize:9,fontWeight:700,opacity:0.9,maxWidth:"88%",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>+ {ghost.itemName}</span>
-                                                </div>
-                                            )}
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Ghost */}
-                    {ghost&&(
-                        <div style={{position:"fixed",left:ghost.x+12,top:ghost.y-16,background:ghost.color,color:textColor(ghost.color),borderRadius:8,padding:"5px 10px",fontSize:11,fontWeight:700,pointerEvents:"none",zIndex:9999,boxShadow:`0 4px 16px ${ghost.color}60`,whiteSpace:"nowrap",maxWidth:180,overflow:"hidden",textOverflow:"ellipsis",transform:"rotate(-2deg)",opacity:0.92}}>
-                            {ghost.itemName}
-                        </div>
-                    )}
-
-                    {/* ── MODAL: 프로젝트 추가 ── */}
-                    {pm==="add"&&(
-                        <Modal onClose={()=>setPm(null)}>
-                            <div style={{fontWeight:800,fontSize:16,marginBottom:18,color:"#1a1a2e"}}>새 프로젝트</div>
-                            <MInput label="프로젝트 이름" value={pForm.name} onChange={v=>setPForm(f=>({...f,name:v}))} onEnter={addProject}/>
-                            <ColorPicker value={pForm.color} onChange={v=>setPForm(f=>({...f,color:v}))}/>
-                            <MActions onCancel={()=>setPm(null)} onConfirm={addProject} disabled={!pForm.name.trim()} color={pForm.color} label="만들기"/>
-                        </Modal>
-                    )}
-
-                    {/* ── MODAL: 프로젝트 편집 ── */}
-                    {pm&&pm.edit&&(
-                        <Modal onClose={()=>setPm(null)}>
-                            <div style={{fontWeight:800,fontSize:16,marginBottom:18,color:"#1a1a2e"}}>프로젝트 편집</div>
-                            <MInput label="프로젝트 이름" value={pForm.name} onChange={v=>setPForm(f=>({...f,name:v}))} onEnter={saveProject} borderColor={`${pForm.color}60`}/>
-                            <ColorPicker value={pForm.color} onChange={v=>setPForm(f=>({...f,color:v}))}/>
-                            <div style={{display:"flex",gap:8}}>
-                                <button onClick={()=>deleteProject(pm.edit.id)} style={{flex:1,padding:"9px",borderRadius:10,border:"none",background:"#fff0f0",color:"#ff6b6b",cursor:"pointer",fontWeight:700,fontSize:13,fontFamily:"inherit"}}>삭제</button>
-                                <button onClick={()=>setPm(null)} style={{flex:1,padding:"9px",borderRadius:10,border:"1.5px solid #eee",background:"#fff",cursor:"pointer",fontWeight:600,fontSize:13,fontFamily:"inherit"}}>취소</button>
-                                <button onClick={saveProject} style={{flex:2,padding:"9px",borderRadius:10,border:"none",background:pForm.color,color:textColor(pForm.color),cursor:"pointer",fontWeight:700,fontSize:13,fontFamily:"inherit",boxShadow:`0 4px 12px ${pForm.color}40`}}>저장</button>
-                            </div>
-                        </Modal>
-                    )}
-
-                    {/* ── MODAL: 과목 추가 ── */}
-                    {sm==="add"&&(
-                        <Modal onClose={()=>setSm(null)}>
-                            <div style={{fontWeight:800,fontSize:16,marginBottom:18,color:"#1a1a2e"}}>새 과목</div>
-                            <MInput label="과목 이름" value={sForm.name} onChange={v=>setSForm(f=>({...f,name:v}))} onEnter={addSubject}/>
-                            <ColorPicker value={sForm.color} onChange={v=>setSForm(f=>({...f,color:v}))}/>
-                            <MActions onCancel={()=>setSm(null)} onConfirm={addSubject} disabled={!sForm.name.trim()} color={sForm.color} label="추가하기"/>
-                        </Modal>
-                    )}
-
-                    {/* ── MODAL: 과목 편집 ── */}
-                    {sm&&sm.edit&&(
-                        <Modal onClose={()=>setSm(null)}>
-                            <div style={{fontWeight:800,fontSize:16,marginBottom:18,color:"#1a1a2e"}}>과목 편집</div>
-                            <MInput label="과목 이름" value={sForm.name} onChange={v=>setSForm(f=>({...f,name:v}))} onEnter={saveSubject} borderColor={`${sForm.color}60`}/>
-                            <ColorPicker value={sForm.color} onChange={v=>setSForm(f=>({...f,color:v}))}/>
-                            <div style={{display:"flex",gap:8}}>
-                                <button onClick={()=>deleteSubject(sm.edit.id)} style={{flex:1,padding:"9px",borderRadius:10,border:"none",background:"#fff0f0",color:"#ff6b6b",cursor:"pointer",fontWeight:700,fontSize:13,fontFamily:"inherit"}}>삭제</button>
-                                <button onClick={()=>setSm(null)} style={{flex:1,padding:"9px",borderRadius:10,border:"1.5px solid #eee",background:"#fff",cursor:"pointer",fontWeight:600,fontSize:13,fontFamily:"inherit"}}>취소</button>
-                                <button onClick={saveSubject} style={{flex:2,padding:"9px",borderRadius:10,border:"none",background:sForm.color,color:textColor(sForm.color),cursor:"pointer",fontWeight:700,fontSize:13,fontFamily:"inherit",boxShadow:`0 4px 12px ${sForm.color}40`}}>저장</button>
-                            </div>
-                        </Modal>
-                    )}
-
-                    {/* ── MODAL: 항목 추가 ── */}
-                    {im&&activeS&&(
-                        <Modal onClose={()=>{setIName("");setIm(false);}}>
-                            <div style={{fontWeight:800,fontSize:16,marginBottom:18,color:"#1a1a2e"}}>새 공부 항목 추가</div>
-                            <MInput label="항목 이름 (예: 기본서 1~30p, 23년 기출)" value={iName} onChange={setIName} onEnter={addItem} borderColor={`${activeS.color}60`}/>
-                            <div style={{marginTop:20}}>
-                                <MActions onCancel={()=>{setIName("");setIm(false);}} onConfirm={addItem} disabled={!iName.trim()} color={activeS.color} label="추가하기"/>
-                            </div>
-                        </Modal>
-                    )}
-
+                  )}
                 </div>
-            );
-        }
+              );
+            })}
+          </div>
+        </div>
+      </div>
 
-        const root = fireplace = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
-    </script>
-</body>
-</html>
+      {/* Ghost */}
+      {ghost&&(
+        <div style={{position:"fixed",left:ghost.x+12,top:ghost.y-16,background:ghost.color,color:textColor(ghost.color),borderRadius:8,padding:"5px 10px",fontSize:11,fontWeight:700,pointerEvents:"none",zIndex:9999,boxShadow:`0 4px 16px ${ghost.color}60`,whiteSpace:"nowrap",maxWidth:180,overflow:"hidden",textOverflow:"ellipsis",transform:"rotate(-2deg)",opacity:0.92}}>
+          {ghost.itemName}
+        </div>
+      )}
+
+      {/* ── MODAL: 프로젝트 추가 ── */}
+      {pm==="add"&&(
+        <Modal onClose={()=>setPm(null)}>
+          <div style={{fontWeight:800,fontSize:16,marginBottom:18,color:"#1a1a2e"}}>새 프로젝트</div>
+          <MInput label="프로젝트 이름" value={pForm.name} onChange={v=>setPForm(f=>({...f,name:v}))} onEnter={addProject}/>
+          <ColorPicker value={pForm.color} onChange={v=>setPForm(f=>({...f,color:v}))}/>
+          <MActions onCancel={()=>setPm(null)} onConfirm={addProject} disabled={!pForm.name.trim()} color={pForm.color} label="만들기"/>
+        </Modal>
+      )}
+
+      {/* ── MODAL: 프로젝트 편집 ── */}
+      {pm&&pm.edit&&(
+        <Modal onClose={()=>setPm(null)}>
+          <div style={{fontWeight:800,fontSize:16,marginBottom:18,color:"#1a1a2e"}}>프로젝트 편집</div>
+          <MInput label="프로젝트 이름" value={pForm.name} onChange={v=>setPForm(f=>({...f,name:v}))} onEnter={saveProject} borderColor={`${pForm.color}60`}/>
+          <ColorPicker value={pForm.color} onChange={v=>setPForm(f=>({...f,color:v}))}/>
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={()=>deleteProject(pm.edit.id)} style={{flex:1,padding:"9px",borderRadius:10,border:"none",background:"#fff0f0",color:"#ff6b6b",cursor:"pointer",fontWeight:700,fontSize:13,fontFamily:"inherit"}}>삭제</button>
+            <button onClick={()=>setPm(null)} style={{flex:1,padding:"9px",borderRadius:10,border:"1.5px solid #eee",background:"#fff",cursor:"pointer",fontWeight:600,fontSize:13,fontFamily:"inherit"}}>취소</button>
+            <button onClick={saveProject} style={{flex:2,padding:"9px",borderRadius:10,border:"none",background:pForm.color,color:textColor(pForm.color),cursor:"pointer",fontWeight:700,fontSize:13,fontFamily:"inherit",boxShadow:`0 4px 12px ${pForm.color}40`}}>저장</button>
+          </div>
+        </Modal>
+      )}
+
+      {/* ── MODAL: 과목 추가 ── */}
+      {sm==="add"&&(
+        <Modal onClose={()=>setSm(null)}>
+          <div style={{fontWeight:800,fontSize:16,marginBottom:18,color:"#1a1a2e"}}>새 과목</div>
+          <MInput label="과목 이름" value={sForm.name} onChange={v=>setSForm(f=>({...f,name:v}))} onEnter={addSubject}/>
+          <ColorPicker value={sForm.color} onChange={v=>setSForm(f=>({...f,color:v}))}/>
+          <MActions onCancel={()=>setSm(null)} onConfirm={addSubject} disabled={!sForm.name.trim()} color={sForm.color} label="추가하기"/>
+        </Modal>
+      )}
+
+      {/* ── MODAL: 과목 편집 ── */}
+      {sm&&sm.edit&&(
+        <Modal onClose={()=>setSm(null)}>
+          <div style={{fontWeight:800,fontSize:16,marginBottom:18,color:"#1a1a2e"}}>과목 편집</div>
+          <MInput label="과목 이름" value={sForm.name} onChange={v=>setSForm(f=>({...f,name:v}))} onEnter={saveSubject} borderColor={`${sForm.color}60`}/>
+          <ColorPicker value={sForm.color} onChange={v=>setSForm(f=>({...f,color:v}))}/>
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={()=>deleteSubject(sm.edit.id)} style={{flex:1,padding:"9px",borderRadius:10,border:"none",background:"#fff0f0",color:"#ff6b6b",cursor:"pointer",fontWeight:700,fontSize:13,fontFamily:"inherit"}}>삭제</button>
+            <button onClick={()=>setSm(null)} style={{flex:1,padding:"9px",borderRadius:10,border:"1.5px solid #eee",background:"#fff",cursor:"pointer",fontWeight:600,fontSize:13,fontFamily:"inherit"}}>취소</button>
+            <button onClick={saveSubject} style={{flex:2,padding:"9px",borderRadius:10,border:"none",background:sForm.color,color:textColor(sForm.color),cursor:"pointer",fontWeight:700,fontSize:13,fontFamily:"inherit",boxShadow:`0 4px 12px ${sForm.color}40`}}>저장</button>
+          </div>
+        </Modal>
+      )}
+
+      {/* ── MODAL: 항목 추가 ── */}
+      {im&&activeS&&(
+        <Modal onClose={()=>setIm(false)}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:18}}>
+            <span style={{width:8,height:8,borderRadius:"50%",background:activeS.color,boxShadow:`0 0 5px ${activeS.color}`}}/>
+            <span style={{fontWeight:800,fontSize:15,color:"#1a1a2e"}}>{activeS.name}</span>
+          </div>
+          <MInput label="항목 이름" value={iName} onChange={setIName} onEnter={addItem} borderColor={`${activeS.color}50`}/>
+          <MActions onCancel={()=>setIm(false)} onConfirm={addItem} disabled={!iName.trim()} color={activeS.color} label="추가하기"/>
+        </Modal>
+      )}
+    </div>
+  );
+}
